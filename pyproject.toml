@@ -1,5 +1,5 @@
 [project]
-name = "python"
+name = "python-workspace-template"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -11,6 +11,7 @@ dependencies = [
     "numpy>=2.4.1",
     "opencv-python>=4.11.0.86",
     "pandas>=2.3.3",
+    "pytest>=9.0.2",
     "pyyaml>=6.0.3",
     "ruff>=0.14.10",
     "scikit-learn>=1.8.0",
@@ -86,3 +87,25 @@ warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
 check_untyped_defs = true
+mypy_path = "src"
+namespace_packages = true
+explicit_package_bases = true
+
+# === Pytest Configuration ===
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[[tool.mypy.overrides]]
+module = "yfinance"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["pytest", "pytest.*"]
+ignore_missing_imports = true
+
+[build-system]
+requires = ["uv_build>=0.9.28,<0.10.0"]
+build-backend = "uv_build"

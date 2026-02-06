@@ -59,7 +59,8 @@ ENV PYTHON_VERSION=3.14.2 \
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="${UV_PROJECT_ENVIRONMENT}/bin:${PATH}:/root/.cargo/bin:${HOME}/.local/bin:${PATH}"
 
-COPY --chown=${USER_UID}:${USER_GID} pyproject.toml uv.lock ./
+COPY --chown=${USER_UID}:${USER_GID} pyproject.toml uv.lock README.md ./
+COPY --chown=${USER_UID}:${USER_GID} src ./src
 
 RUN uv python install ${PYTHON_VERSION} && \
     uv venv --python ${PYTHON_VERSION} ${UV_PROJECT_ENVIRONMENT} \
