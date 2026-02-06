@@ -1,4 +1,4 @@
-FROM nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04
+FROM nvidia/cuda:13.0.2-cudnn-runtime-ubuntu24.04
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -8,19 +8,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # Basic tools
-    build-essential \
     git \
     curl \
     wget \
     ca-certificates \
-    cmake \
     # Image processing dependencies
     libgl1 \
     libglib2.0-0 \
-    # Scientific computing dependencies
-    libopenblas-dev \
-    liblapack-dev \
-    gfortran \
     # Utilities
     zip \
     unzip \
@@ -44,8 +38,7 @@ RUN userdel -r ubuntu 2>/dev/null || true \
     && groupadd --gid ${USER_GID} --non-unique ${GROUP_NAME} \
     && useradd -m --no-log-init --uid ${USER_UID} --gid ${USER_GID} --groups sudo --base-dir /home --shell /bin/bash ${USER_NAME} \
     && touch ${HOME}/.sudo_as_admin_successful \
-    && echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers \
-    && echo '${USER_NAME} ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+    && echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 
 RUN mkdir -p ${WORKSPACE} \
     && chown -R ${USER_UID}:${USER_GID} ${WORKSPACE} \
@@ -58,7 +51,7 @@ ENV PYTHON_VERSION=3.14.2 \
     UV_PROJECT_ENVIRONMENT=${HOME}/.venv
 
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="${UV_PROJECT_ENVIRONMENT}/bin:${PATH}:/root/.cargo/bin:${HOME}/.local/bin:${PATH}"
+ENV PATH="${UV_PROJECT_ENVIRONMENT}/bin:${HOME}/.local/bin:${PATH}"
 
 COPY --chown=${USER_UID}:${USER_GID} pyproject.toml uv.lock README.md ./
 COPY --chown=${USER_UID}:${USER_GID} src ./src

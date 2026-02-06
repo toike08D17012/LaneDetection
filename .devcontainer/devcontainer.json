@@ -35,7 +35,5 @@
             }
         }
     },
-    // コンテナ作成後に uv sync を実行して環境を整える
-    "postCreateCommand": "uv sync",
     "remoteUser": "kujira"
 }
