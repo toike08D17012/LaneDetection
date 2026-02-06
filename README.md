@@ -13,6 +13,7 @@ Dev Container、uv、Ruff、Mypyを用いたモダンな開発環境を提供し
 以下の箇所を適切に修正してください
 - `README.md` / `README_en.md`の「最初にやること」/「Inital Setup」の章を削除
 - `README.md` / `README_en.md`のレポジトリの説明を修正
+- `src/python_workspace_template`を`src/{repositroy_name}`に修正
 - `docker/docker-compose.yml`の以下の内容をレポジトリ名に合わせて修正
     - image名
     - サービス名
