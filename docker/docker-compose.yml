@@ -1,5 +1,14 @@
 services:
   ml-env:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        REPO_NAME: ${REPO_NAME:-python-workspace-template}
+        USER_NAME: ${USER_NAME:-kujira}
+        GROUP_NAME: ${GROUP_NAME:-kujira}
+        USER_UID: ${USER_UID:-1000}
+        USER_GID: ${USER_GID:-1000}
     image: python-workspace-template:latest
     volumes:
       - ../:/home/kujira/workspace/python-workspace-template
