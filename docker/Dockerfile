@@ -26,6 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     procps \
     nano \
+    gosu \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 ENV TZ=Asia/Tokyo
@@ -69,3 +70,7 @@ RUN uv python install ${PYTHON_VERSION} && \
 
 # Default command
 CMD ["bash"]
+
+USER root
+COPY --chmod=755 docker/entrypoint.sh /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
