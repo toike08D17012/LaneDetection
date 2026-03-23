@@ -1,5 +1,5 @@
 ---
-name: "Docker Runner"
+name: "docker-runner"
 description: "dockerコンテナの起動スクリプト"
 ---
 
