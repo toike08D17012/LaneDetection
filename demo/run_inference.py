@@ -16,8 +16,98 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+
+def _to_json_serializable(obj: Any) -> Any:
+    """Convert nested prediction payloads into JSON-serializable objects."""
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, np.generic):
+        return obj.item()
+    if isinstance(obj, Path):
+        return str(obj)
+    if isinstance(obj, dict):
+        return {str(k): _to_json_serializable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_to_json_serializable(v) for v in obj]
+    return obj
+
+
+def _lane_point_count(lane_pred: Any) -> int:
+    """Estimate point count from one prediction entry."""
+    if isinstance(lane_pred, dict):
+        for key in ("points", "keypoints", "coords", "polyline", "lane"):
+            value = lane_pred.get(key)
+            if isinstance(value, (list, tuple, np.ndarray)):
+                return int(len(value))
+        if "x" in lane_pred and isinstance(lane_pred["x"], (list, tuple, np.ndarray)):
+            return int(len(lane_pred["x"]))
+        return 0
+
+    if isinstance(lane_pred, (list, tuple, np.ndarray)):
+        return int(len(lane_pred))
+    return 0
+
+
+def _lane_y_range(lane_pred: Any) -> tuple[float, float] | None:
+    """Estimate y-range from one prediction entry when available."""
+    points: np.ndarray | None = None
+    if isinstance(lane_pred, dict):
+        for key in ("points", "keypoints", "coords", "polyline", "lane"):
+            value = lane_pred.get(key)
+            if value is None:
+                continue
+            candidate = np.asarray(value)
+            if candidate.ndim == 2 and candidate.shape[1] >= 2:
+                points = candidate[:, :2]
+                break
+        if points is None and "y" in lane_pred:
+            y_vals = np.asarray(lane_pred["y"]) if lane_pred["y"] is not None else np.array([])
+            if y_vals.size > 0:
+                return float(np.min(y_vals)), float(np.max(y_vals))
+    else:
+        candidate = np.asarray(lane_pred)
+        if candidate.ndim == 2 and candidate.shape[1] >= 2:
+            points = candidate[:, :2]
+
+    if points is None or points.size == 0:
+        return None
+    y_vals = points[:, 1].astype(np.float64)
+    return float(np.min(y_vals)), float(np.max(y_vals))
+
+
+def _build_prediction_summary(preds: list[Any]) -> list[dict[str, Any]]:
+    """Create compact lane-by-lane summary for diagnostics."""
+    summary: list[dict[str, Any]] = []
+    for idx, lane_pred in enumerate(preds):
+        y_range = _lane_y_range(lane_pred)
+        lane_info: dict[str, Any] = {
+            "index": idx,
+            "point_count": _lane_point_count(lane_pred),
+        }
+        if y_range is not None:
+            lane_info["y_min"] = y_range[0]
+            lane_info["y_max"] = y_range[1]
+        summary.append(lane_info)
+    return summary
+
+
+def _save_predictions_json(path: Path, image_path: Path, preds: list[Any]) -> None:
+    """Write raw predictions and compact summary to a JSON file."""
+    payload = {
+        "image": str(image_path),
+        "prediction_count": len(preds),
+        "summary": _build_prediction_summary(preds),
+        "predictions": _to_json_serializable(preds),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -45,6 +135,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--device",
         default="cuda:0",
         help="PyTorch device string: 'cuda:0' (default) or 'cpu'",
+    )
+    parser.add_argument(
+        "--preds-json",
+        type=Path,
+        default=None,
+        help="Optional path to save raw lane predictions as JSON for debugging",
     )
     return parser
 
@@ -91,7 +187,23 @@ def main() -> int:
     )
 
     print(f"Running inference on {args.image}...")
-    detector.detect_and_visualize(args.image, save_path=args.output)
+    source_bgr, preds = detector.detect(args.image)
+    detector.detect_and_visualize(source_bgr, save_path=args.output)
+
+    summary = _build_prediction_summary(preds)
+    print(f"Detected lane predictions: {len(preds)}")
+    for lane_info in summary:
+        y_text = "n/a"
+        if "y_min" in lane_info and "y_max" in lane_info:
+            y_text = f"{lane_info['y_min']:.1f}..{lane_info['y_max']:.1f}"
+        print(
+            f"  lane[{lane_info['index']}]: points={lane_info['point_count']}, "
+            f"y_range={y_text}"
+        )
+
+    if args.preds_json is not None:
+        _save_predictions_json(path=args.preds_json, image_path=args.image, preds=preds)
+        print(f"Saved raw predictions JSON to: {args.preds_json}")
 
     print(f"Done. Result saved to: {args.output}")
     return 0
