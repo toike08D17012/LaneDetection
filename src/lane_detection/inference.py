@@ -34,6 +34,29 @@ _DEFAULT_CONFIG = "configs/clrernet/culane/clrernet_culane_dla34_ema.py"
 _WHITE_BGR_LOW = np.array([160, 160, 160], dtype=np.uint8)
 _WHITE_BGR_HIGH = np.array([255, 255, 255], dtype=np.uint8)
 
+# CULane dataset native resolution expected by the CLRerNet test pipeline.
+# The albumentations crop in the pipeline is hardcoded to these dimensions, so
+# every input image must be resized to (H, W) = (590, 1640) before inference.
+_MODEL_INPUT_H: int = 590
+_MODEL_INPUT_W: int = 1640
+
+
+@dataclass(frozen=True)
+class ImageTransform:
+    """Forward/inverse mapping between original and model input coordinates.
+
+    Attributes:
+        crop_x: Left crop offset in original image coordinates.
+        crop_y: Top crop offset in original image coordinates.
+        scale_x: Horizontal scale from cropped image to model input.
+        scale_y: Vertical scale from cropped image to model input.
+    """
+
+    crop_x: float
+    crop_y: float
+    scale_x: float
+    scale_y: float
+
 
 @dataclass(frozen=True)
 class CenterlineSampleResult:
@@ -412,6 +435,120 @@ class LaneDetector:
         importlib.invalidate_caches()
         return True
 
+    @staticmethod
+    def _repair_noncallable_clrernet_nms() -> bool:
+        """Rebind CLRerNet head ``nms`` symbol when imported as a module object.
+
+        Some environments resolve ``nms`` in ``clrernet_head`` to a module
+        instead of the callable function. This helper restores the callable
+        binding when the module exposes an ``nms`` attribute.
+        """
+        try:
+            clrernet_head = importlib.import_module("libs.models.dense_heads.clrernet_head")
+        except Exception:
+            return False
+
+        nms_symbol = getattr(clrernet_head, "nms", None)
+        if callable(nms_symbol):
+            return False
+        if nms_symbol is None:
+            return False
+
+        rebound = getattr(nms_symbol, "nms", None)
+        if callable(rebound):
+            clrernet_head.nms = rebound
+            return True
+        return False
+
+    @staticmethod
+    def _compute_preprocess_transform(height: int, width: int) -> tuple[int, int, int, int, ImageTransform]:
+        """Compute crop window and scale that preserve target aspect ratio.
+
+        The output crop keeps the target aspect ratio (W/H = 1640/590). When the
+        input is vertically long, the crop removes rows from the top so the lower
+        road region is retained.
+        """
+        target_ratio = _MODEL_INPUT_W / _MODEL_INPUT_H
+        input_ratio = width / height
+
+        if input_ratio < target_ratio:
+            crop_h = int(round(width / target_ratio))
+            crop_h = max(1, min(crop_h, height))
+            crop_w = width
+            crop_x = 0
+            crop_y = height - crop_h
+        else:
+            crop_w = int(round(height * target_ratio))
+            crop_w = max(1, min(crop_w, width))
+            crop_h = height
+            crop_x = (width - crop_w) // 2
+            crop_y = 0
+
+        scale_x = _MODEL_INPUT_W / crop_w
+        scale_y = _MODEL_INPUT_H / crop_h
+        transform = ImageTransform(
+            crop_x=float(crop_x),
+            crop_y=float(crop_y),
+            scale_x=float(scale_x),
+            scale_y=float(scale_y),
+        )
+        return crop_x, crop_y, crop_w, crop_h, transform
+
+    @staticmethod
+    def _preprocess_image(bgr: np.ndarray) -> tuple[np.ndarray, ImageTransform]:
+        """Crop and resize image for CLRerNet while preserving aspect ratio."""
+        height, width = bgr.shape[:2]
+        crop_x, crop_y, crop_w, crop_h, transform = LaneDetector._compute_preprocess_transform(height, width)
+        cropped = bgr[crop_y : crop_y + crop_h, crop_x : crop_x + crop_w]
+        if cropped.shape[0] != _MODEL_INPUT_H or cropped.shape[1] != _MODEL_INPUT_W:
+            resized = cv2.resize(cropped, (_MODEL_INPUT_W, _MODEL_INPUT_H), interpolation=cv2.INTER_LINEAR)
+        else:
+            resized = cropped
+        return resized, transform
+
+    @staticmethod
+    def _inverse_transform_points(points_xy: np.ndarray, transform: ImageTransform) -> np.ndarray:
+        """Map points from model input coordinates back to original image."""
+        mapped = points_xy.astype(np.float32).copy()
+        mapped[:, 0] = mapped[:, 0] / transform.scale_x + transform.crop_x
+        mapped[:, 1] = mapped[:, 1] / transform.scale_y + transform.crop_y
+        return mapped
+
+    @staticmethod
+    def _inverse_transform_predictions(preds: list, transform: ImageTransform) -> list:
+        """Map lane coordinates in predictions back to original image coordinates."""
+        transformed_preds: list = []
+        for lane_pred in preds:
+            if not isinstance(lane_pred, dict):
+                points = LaneDetector._extract_lane_points(lane_pred)
+                if points is None:
+                    transformed_preds.append(lane_pred)
+                    continue
+                transformed_preds.append(LaneDetector._inverse_transform_points(points, transform))
+                continue
+
+            lane_copy = dict(lane_pred)
+            points_key = None
+            for key in ("points", "keypoints", "coords", "polyline", "lane"):
+                if key in lane_copy:
+                    points_key = key
+                    break
+
+            if points_key is not None:
+                points = np.asarray(lane_copy[points_key], dtype=np.float32)
+                if points.ndim == 2 and points.shape[1] >= 2:
+                    mapped = LaneDetector._inverse_transform_points(points[:, :2], transform)
+                    lane_copy[points_key] = mapped.tolist()
+            elif "x" in lane_copy and "y" in lane_copy:
+                x_vals = np.asarray(lane_copy["x"], dtype=np.float32)
+                y_vals = np.asarray(lane_copy["y"], dtype=np.float32)
+                if x_vals.shape == y_vals.shape:
+                    lane_copy["x"] = (x_vals / transform.scale_x + transform.crop_x).tolist()
+                    lane_copy["y"] = (y_vals / transform.scale_y + transform.crop_y).tolist()
+
+            transformed_preds.append(lane_copy)
+        return transformed_preds
+
     def detect(self, image: str | Path | np.ndarray) -> tuple[np.ndarray, list]:
         """Run lane detection on a single image.
 
@@ -451,22 +588,36 @@ class LaneDetector:
         if inference_one_image is None:
             raise RuntimeError("Failed to load CLRerNet inference function.")
 
+        # Load image into a numpy array so we can normalise the resolution.
         if isinstance(image, (str, Path)):
             image_path = Path(image)
             if not image_path.exists():
                 raise FileNotFoundError(f"Input image not found: {image_path}")
-            src, preds = inference_one_image(self.model, str(image_path))
+            original_bgr = cv2.imread(str(image_path))
+            if original_bgr is None:
+                raise ValueError(f"Failed to decode image: {image_path}")
         else:
-            # Accept numpy array input by writing to a temporary file
-            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-                tmp_path = tmp.name
-            try:
-                cv2.imwrite(tmp_path, image)
-                src, preds = inference_one_image(self.model, tmp_path)
-            finally:
-                Path(tmp_path).unlink(missing_ok=True)
+            original_bgr = image
 
-        return src, preds
+        # Keep the transform invertible by using crop + aspect-preserving resize.
+        model_input_bgr, transform = self._preprocess_image(original_bgr)
+
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            cv2.imwrite(tmp_path, model_input_bgr)
+            try:
+                src, preds = inference_one_image(self.model, tmp_path)
+            except TypeError as exc:
+                if "'module' object is not callable" in str(exc) and self._repair_noncallable_clrernet_nms():
+                    src, preds = inference_one_image(self.model, tmp_path)
+                else:
+                    raise
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+        mapped_preds = self._inverse_transform_predictions(preds, transform)
+        return original_bgr, mapped_preds
 
     def detect_centerline_samples(
         self,
@@ -559,4 +710,5 @@ class LaneDetector:
             kwargs["save_path"] = str(save_path)
 
         dst: np.ndarray = visualize_lanes(src, preds, **kwargs)
+
         return dst

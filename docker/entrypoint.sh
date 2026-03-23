@@ -33,7 +33,8 @@ fi
 
 WORKSPACE="${WORK_DIR:-${HOME}}"
 if [ -f "${WORKSPACE}/pyproject.toml" ]; then
-    gosu kujira bash -c "cd '${WORKSPACE}' && uv sync --frozen"
+    # Keep preinstalled CLRerNet native extensions (e.g., nms) in the runtime env.
+    gosu kujira bash -c "cd '${WORKSPACE}' && uv sync --frozen --inexact"
 fi
 
 exec gosu kujira "$@"

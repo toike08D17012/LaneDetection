@@ -22,7 +22,6 @@ dependencies = [
     "yapf==0.40.1",
     "setuptools<82",
     "tensorboard>=2.14.0",
-    "nms>=0.1.6",
 ]
 
 [tool.uv]

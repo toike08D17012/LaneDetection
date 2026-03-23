@@ -9,11 +9,43 @@ or CLRerNet dependencies (mmdet/libs are mocked where necessary).
 from __future__ import annotations
 
 import sys
+import types
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+
+
+def test_repair_noncallable_clrernet_nms_rebinds_callable() -> None:
+    """Repair helper rewires module-like nms symbols to their callable nms attribute."""
+    from lane_detection.inference import LaneDetector
+
+    rebound_callable = MagicMock()
+    clrernet_head = types.SimpleNamespace(
+        nms=types.SimpleNamespace(nms=rebound_callable),
+    )
+
+    with patch("lane_detection.inference.importlib.import_module", return_value=clrernet_head):
+        repaired = LaneDetector._repair_noncallable_clrernet_nms()
+
+    assert repaired is True
+    assert clrernet_head.nms is rebound_callable
+    assert callable(clrernet_head.nms)
+
+
+def test_repair_noncallable_clrernet_nms_noop_when_already_callable() -> None:
+    """Repair helper leaves callable nms symbol unchanged."""
+    from lane_detection.inference import LaneDetector
+
+    callable_nms = MagicMock()
+    clrernet_head = types.SimpleNamespace(nms=callable_nms)
+
+    with patch("lane_detection.inference.importlib.import_module", return_value=clrernet_head):
+        repaired = LaneDetector._repair_noncallable_clrernet_nms()
+
+    assert repaired is False
+    assert clrernet_head.nms is callable_nms
 
 
 def test_lane_detector_class_importable() -> None:
@@ -133,8 +165,171 @@ def test_detect_with_numpy_input(tmp_path: Path) -> None:
         detector = LaneDetector(checkpoint=fake_checkpoint, config=fake_config)
         src, preds = detector.detect(dummy_image)
 
-    assert src is mock_src
-    assert preds is mock_preds
+    assert src is dummy_image
+    assert preds == mock_preds
+
+
+def test_detect_resizes_non_culane_image_to_model_input(tmp_path: Path) -> None:
+    """detect() resizes images that do not match the CULane model input size (590×1640)."""
+    import cv2 as _cv2
+
+    fake_config = tmp_path / "config.py"
+    fake_config.write_text("# dummy config")
+    fake_checkpoint = tmp_path / "model.pth"
+    fake_checkpoint.write_bytes(b"")
+
+    # CULane resolution is 590×1640; pass a typical 540×960 image instead.
+    input_image = np.zeros((540, 960, 3), dtype=np.uint8)
+    mock_src = np.zeros((590, 1640, 3), dtype=np.uint8)
+    mock_preds: list = []
+
+    written_shapes: list[tuple[int, int]] = []
+
+    original_imwrite = _cv2.imwrite
+
+    def capturing_imwrite(path: str, img: np.ndarray, *args: object) -> bool:
+        written_shapes.append((img.shape[0], img.shape[1]))
+        return original_imwrite(path, img, *args)
+
+    mmdet_mock = MagicMock()
+    mmdet_mock.apis.init_detector.return_value = MagicMock()
+    libs_mock = MagicMock()
+    libs_mock.api.inference.inference_one_image.return_value = (mock_src, mock_preds)
+
+    with patch.dict(
+        "sys.modules",
+        {
+            "mmdet": mmdet_mock,
+            "mmdet.apis": mmdet_mock.apis,
+            "libs": libs_mock,
+            "libs.api": libs_mock.api,
+            "libs.api.inference": libs_mock.api.inference,
+        },
+    ), patch("lane_detection.inference.cv2.imwrite", side_effect=capturing_imwrite):
+        from lane_detection.inference import LaneDetector
+
+        detector = LaneDetector(checkpoint=fake_checkpoint, config=fake_config)
+        src, preds = detector.detect(input_image)
+
+    # The image written to the temp file must be the model input size.
+    assert len(written_shapes) == 1
+    assert written_shapes[0] == (590, 1640), f"Expected (590, 1640), got {written_shapes[0]}"
+    assert src is input_image
+    assert preds == mock_preds
+
+
+def test_detect_inverse_transforms_predictions_after_top_crop(tmp_path: Path) -> None:
+    """detect() maps model-space lane points back to original image coordinates."""
+    fake_config = tmp_path / "config.py"
+    fake_config.write_text("# dummy config")
+    fake_checkpoint = tmp_path / "model.pth"
+    fake_checkpoint.write_bytes(b"")
+
+    input_image = np.zeros((540, 960, 3), dtype=np.uint8)
+    model_src = np.zeros((590, 1640, 3), dtype=np.uint8)
+    model_preds = [{"points": [[0.0, 0.0], [1640.0, 590.0]]}]
+
+    mmdet_mock = MagicMock()
+    mmdet_mock.apis.init_detector.return_value = MagicMock()
+    libs_mock = MagicMock()
+    libs_mock.api.inference.inference_one_image.return_value = (model_src, model_preds)
+
+    with patch.dict(
+        "sys.modules",
+        {
+            "mmdet": mmdet_mock,
+            "mmdet.apis": mmdet_mock.apis,
+            "libs": libs_mock,
+            "libs.api": libs_mock.api,
+            "libs.api.inference": libs_mock.api.inference,
+        },
+    ):
+        from lane_detection.inference import LaneDetector
+
+        detector = LaneDetector(checkpoint=fake_checkpoint, config=fake_config)
+        _, preds = detector.detect(input_image)
+
+    points = np.asarray(preds[0]["points"], dtype=np.float32)
+    assert points[0, 0] == pytest.approx(0.0, abs=1.0)
+    assert points[0, 1] == pytest.approx(195.0, abs=1.0)
+    assert points[1, 0] == pytest.approx(960.0, abs=1.0)
+    assert points[1, 1] == pytest.approx(540.0, abs=1.0)
+
+
+def test_detect_and_visualize_restores_original_resolution(tmp_path: Path) -> None:
+    """detect_and_visualize() returns an image matching the original input resolution."""
+    fake_config = tmp_path / "config.py"
+    fake_config.write_text("# dummy config")
+    fake_checkpoint = tmp_path / "model.pth"
+    fake_checkpoint.write_bytes(b"")
+
+    # Simulate 540×960 input (smaller than model's 590×1640).
+    input_image = np.zeros((540, 960, 3), dtype=np.uint8)
+    model_src = np.zeros((590, 1640, 3), dtype=np.uint8)
+
+    def mock_visualize(src: np.ndarray, _preds: list, **_kwargs: object) -> np.ndarray:
+        return src.copy()
+
+    mmdet_mock = MagicMock()
+    mmdet_mock.apis.init_detector.return_value = MagicMock()
+    libs_mock = MagicMock()
+    libs_mock.api.inference.inference_one_image.return_value = (model_src, [])
+    libs_mock.utils.visualizer.visualize_lanes.side_effect = mock_visualize
+
+    with patch.dict(
+        "sys.modules",
+        {
+            "mmdet": mmdet_mock,
+            "mmdet.apis": mmdet_mock.apis,
+            "libs": libs_mock,
+            "libs.api": libs_mock.api,
+            "libs.api.inference": libs_mock.api.inference,
+            "libs.utils": libs_mock.utils,
+            "libs.utils.visualizer": libs_mock.utils.visualizer,
+        },
+    ):
+        from lane_detection.inference import LaneDetector
+
+        detector = LaneDetector(checkpoint=fake_checkpoint, config=fake_config)
+        result = detector.detect_and_visualize(input_image)
+
+    assert result.shape[0] == 540
+    assert result.shape[1] == 960
+
+
+def test_detect_keeps_array_type_for_sequence_lane_predictions(tmp_path: Path) -> None:
+    """Non-dict predictions remain numpy arrays after inverse transform mapping."""
+    fake_config = tmp_path / "config.py"
+    fake_config.write_text("# dummy config")
+    fake_checkpoint = tmp_path / "model.pth"
+    fake_checkpoint.write_bytes(b"")
+
+    input_image = np.zeros((540, 960, 3), dtype=np.uint8)
+    model_src = np.zeros((590, 1640, 3), dtype=np.uint8)
+    model_preds = [[[0.0, 0.0], [1640.0, 590.0]]]
+
+    mmdet_mock = MagicMock()
+    mmdet_mock.apis.init_detector.return_value = MagicMock()
+    libs_mock = MagicMock()
+    libs_mock.api.inference.inference_one_image.return_value = (model_src, model_preds)
+
+    with patch.dict(
+        "sys.modules",
+        {
+            "mmdet": mmdet_mock,
+            "mmdet.apis": mmdet_mock.apis,
+            "libs": libs_mock,
+            "libs.api": libs_mock.api,
+            "libs.api.inference": libs_mock.api.inference,
+        },
+    ):
+        from lane_detection.inference import LaneDetector
+
+        detector = LaneDetector(checkpoint=fake_checkpoint, config=fake_config)
+        _, preds = detector.detect(input_image)
+
+    assert isinstance(preds[0], np.ndarray)
+    assert preds[0].shape == (2, 2)
 
 
 def _make_vertical_lane(x: float, y_start: float = 10.0, y_end: float = 110.0) -> list[list[float]]:
