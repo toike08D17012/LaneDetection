@@ -12,6 +12,15 @@ ENV/
 env.bak/
 venv.bak/
 
+# === Model Weights ===
+weights/
+*.pth
+*.pt
+
+# === Inference Outputs ===
+result.png
+result.jpg
+
 # === Distribution / Packaging ===
 dist/
 build/
@@ -70,3 +79,5 @@ logs/
 
 # === Generated file by development pipeline
 .devcontainer/docker-compose.generated.yml
+
+.copilot-tracking/

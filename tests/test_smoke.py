@@ -1,8 +1,8 @@
-"""Smoke tests for the template package."""
+"""Smoke tests for the lane_detection package."""
 
-from python_workspace_template import __version__
+from lane_detection import __version__
 
 
 def test_package_version() -> None:
-    """Ensure the base package is importable."""
+    """Ensure the lane_detection package is importable and version is set."""
     assert __version__ == "0.1.0"
