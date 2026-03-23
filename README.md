@@ -1,77 +1,120 @@
-# Python Workspace Template
+# CLRerNet 白線検知環境
 
-[English Versions](README_en.md) | 日本語
+[English](README_en.md) | 日本語
 
-Pythonプロジェクト開発用のテンプレートリポジトリです。
-Dev Container、uv、Ruff、Mypyを用いたモダンな開発環境を提供します。
+CLRerNet（WACV 2024）を使った白線検知推論環境です。  
+Docker + CUDA 12.1 + PyTorch 2.1 + mmlab スタックで構成されています。
 
-## 最初にやること
-以下の指示をCoding Agentにお願いしてください
-なお、〇〇の部分は適宜置き換えてください
-```
-このレポジトリは〇〇を目的としたレポジトリです。
-以下の箇所を適切に修正してください
-- `README.md` / `README_en.md`の「最初にやること」/「Inital Setup」の章を削除
-- `README.md` / `README_en.md`のレポジトリの説明を修正
-- `src/python_workspace_template`を`src/{repositroy_name}`に修正
-- `docker/docker-compose.yml`の以下の内容をレポジトリ名に合わせて修正
-    - image名
-    - サービス名
-    - volumes
-    - working_dir
-- `docker/docker-compose.gpu.yml`の以下の内容をレポジトリ名に合わせて修正
-    - サービス名
-- `docker/run-docker.sh`の起動するサービス名をレポジトリ名に合わせて修正
-- `.devcontainer/devcontainer.json`の以下の内容をレポジトリ名に合わせて修正
-    - name
-    - service
-    - workSpaceForder
-```
+## 環境要件
 
-## 機能・特徴
+| 項目 | 要件 |
+|------|------|
+| OS | Linux (Ubuntu 22.04 推奨) |
+| GPU | NVIDIA CUDA 12.1 対応 GPU |
+| Docker | Docker Engine + NVIDIA Container Toolkit |
 
-- **パッケージ管理**: `uv` を使用した高速な依存関係解決
-- **開発環境**: Dev Container (`.devcontainer`) による一貫した環境
-- **静的解析・フォーマット**: `ruff` による高速なLint/Format
-- **型チェック**: `mypy` による静的型チェック
-- **機械学習対応**: PyTorch (CPU/CUDA) の動的なインストール設定済み
+> **CPU専用環境での注意**: カスタムNMS拡張はCUDA必須です。CPUのみの環境では `--device cpu` で一部機能が制限されます。
 
-## 使い方
+## セットアップ手順
 
-### 1. Dev Container の起動
-VS Code で本リポジトリを開き、推奨される拡張機能「Dev Containers」を使用してコンテナを起動してください。
-`postCreateCommand` により、自動的に `uv sync` が実行され、環境がセットアップされます。
-
-### 2. 依存関係の追加
-パッケージを追加する場合は `uv` を使用します。
+### 1. Dockerイメージのビルド
 
 ```bash
-uv add <package_name>
+cd docker
+bash build-docker.sh
 ```
 
-### 3. 品質管理コマンド
-本プロジェクトでは `AGENTS.md` に基づき、以下のコマンドでの品質チェックを推奨しています。
+ビルドには時間がかかります（主にPyTorch/mmlab のダウンロード）。
+
+### 2. モデルウェイトのダウンロード
+
+コンテナの外（ホスト）、またはコンテナ内でダウンロードします。
 
 ```bash
-# フォーマット、Lint自動修正、型チェックを一括実行
-ruff format && ruff check --fix && mypy .
+# ホストで実行（コンテナ起動後にマウントされる）
+bash scripts/download_weights.sh
 ```
 
-## Docker ベースイメージの切り替え
+ダウンロードされるファイル:
+- `weights/clrernet_culane_dla34_ema.pth` (推奨・高精度 F1=81.55)
+- `weights/clrernet_culane_dla34.pth` (標準 F1=81.11)
 
-デフォルトのベースイメージは軽量な `ubuntu:24.04` です。
-GPU / 機械学習用途では、`docker/Dockerfile` の先頭を以下のように書き換えてください。
+### 3. コンテナの起動
 
-```dockerfile
-# 変更前（デフォルト）
-FROM ubuntu:24.04
+```bash
+cd docker
+bash run-docker.sh
+```
 
-# 変更後（ML/CUDA用）
-FROM nvidia/cuda:13.0.2-cudnn-runtime-ubuntu24.04
+### 4. 推論の実行
+
+コンテナ内で以下を実行します。
+
+```bash
+# Python ラッパーを使用したシンプルな推論
+python demo/run_inference.py \
+    <input_image.jpg> \
+    weights/clrernet_culane_dla34_ema.pth \
+    --output result.png
+
+# CLRerNet のデモスクリプトを直接使用する場合
+python /opt/CLRerNet/demo/image_demo.py \
+    <input_image.jpg> \
+    /opt/CLRerNet/configs/clrernet/culane/clrernet_culane_dla34_ema.py \
+    weights/clrernet_culane_dla34_ema.pth \
+    --out-file result.png
+```
+
+### 5. Python API（コンテナ内）
+
+```python
+from lane_detection import LaneDetector
+
+detector = LaneDetector(
+    checkpoint="weights/clrernet_culane_dla34_ema.pth",
+    device="cuda:0",
+)
+
+result = detector.detect_and_visualize("input.jpg", save_path="result.png")
 ```
 
 ## ディレクトリ構成
 
+```
+LaneDetection/
+├── docker/
+│   ├── Dockerfile              # CUDA 12.1 + Python 3.11 + CLRerNet
+│   ├── docker-compose.yml
+│   └── docker-compose.gpu.yml
+├── src/
+│   └── lane_detection/
+│       ├── __init__.py
+│       └── inference.py        # LaneDetector クラス
+├── demo/
+│   └── run_inference.py        # デモ推論スクリプト
+├── scripts/
+│   └── download_weights.sh     # モデルウェイトダウンロード
+├── weights/                    # ダウンロードしたモデル (.pth) を配置
+└── tests/
+```
+
+## 品質管理コマンド（コンテナ内）
+
+```bash
+ruff format && ruff check --fix && mypy . && pytest
+```
+
+## Docker ベースイメージ
+
+本プロジェクトは `nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04` をベースイメージとして使用します。  
+CLRerNetのカスタムNMS拡張コンパイルには `devel` イメージ（nvcc付き）が必須です。
+
+## ディレクトリ構成
+
 - `.devcontainer/`: Dev Container 設定 (VS Code用)
-- `docker/`: docker関連ファイル
+- `docker/`: Docker関連ファイル
+- `src/lane_detection/`: 白線検知ラッパーモジュール
+- `demo/`: 推論デモスクリプト
+- `scripts/`: ユーティリティスクリプト
 - `AGENTS.md`: コーディング規約 (Google Style, Ruff設定など)
+
