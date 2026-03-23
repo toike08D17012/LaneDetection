@@ -76,6 +76,32 @@ def test_lane_detector_missing_image(tmp_path: Path) -> None:
             detector.detect(tmp_path / "nonexistent.jpg")
 
 
+def test_lane_detector_init_uses_random_palette(tmp_path: Path) -> None:
+    """LaneDetector initialization forwards palette override to init_detector."""
+    fake_config = tmp_path / "config.py"
+    fake_config.write_text("# dummy config")
+    fake_checkpoint = tmp_path / "model.pth"
+    fake_checkpoint.write_bytes(b"")
+
+    mmdet_mock = MagicMock()
+    mmdet_mock.apis.init_detector.return_value = MagicMock()
+
+    with patch.dict(
+        "sys.modules",
+        {"mmdet": mmdet_mock, "mmdet.apis": mmdet_mock.apis},
+    ):
+        from lane_detection.inference import LaneDetector
+
+        LaneDetector(checkpoint=fake_checkpoint, config=fake_config)
+
+    mmdet_mock.apis.init_detector.assert_called_once_with(
+        str(fake_config),
+        str(fake_checkpoint),
+        device="cuda:0",
+        palette="random",
+    )
+
+
 def test_detect_with_numpy_input(tmp_path: Path) -> None:
     """detect() accepts a numpy array and passes it through a temporary file."""
     fake_config = tmp_path / "config.py"

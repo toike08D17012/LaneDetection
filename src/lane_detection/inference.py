@@ -105,7 +105,13 @@ class LaneDetector:
         from mmdet.apis import init_detector
 
         self.device = device
-        self.model = init_detector(str(resolved_config), str(resolved_checkpoint), device=device)
+        # Force non-default palette to avoid dataset construction in mmdet init path.
+        self.model = init_detector(
+            str(resolved_config),
+            str(resolved_checkpoint),
+            device=device,
+            palette="random",
+        )
 
     @staticmethod
     def _extract_lane_points(lane_pred: Any) -> np.ndarray | None:
