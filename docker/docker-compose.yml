@@ -13,6 +13,7 @@ services:
     image: lane-detection:latest
     volumes:
       - ../:/home/kujira/workspace/${REPO_NAME:-LaneDetection}
+      - ./.bash_history:/home/kujira/.bash_history
     tty: true
     stdin_open: true
     network_mode: 'host'

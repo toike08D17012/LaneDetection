@@ -9,6 +9,11 @@ else
     COMPOSE_FILES="-f docker-compose.yml"
 fi
 
+BASH_HISTORY_FILE=$(realpath ./.bash_history)
+if [ ! -f "$BASH_HISTORY_FILE" ]; then
+    touch "$BASH_HISTORY_FILE"
+fi
+
 # デフォルトではbash、引数があればそれを実行
 docker compose $COMPOSE_FILES run \
     --rm \

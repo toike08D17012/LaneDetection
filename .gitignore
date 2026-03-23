@@ -81,3 +81,5 @@ logs/
 .devcontainer/docker-compose.generated.yml
 
 .copilot-tracking/
+
+.bash_history
