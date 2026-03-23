@@ -31,7 +31,7 @@ if [ -n "$NEW_GID" ] && [ "$NEW_GID" != "$OLD_GID" ]; then
     echo "✅ 'kujira' group ID updated successfully."
 fi
 
-WORKSPACE="${WORKSPACE:-${HOME}}"
+WORKSPACE="${WORK_DIR:-${HOME}}"
 if [ -f "${WORKSPACE}/pyproject.toml" ]; then
     gosu kujira bash -c "cd '${WORKSPACE}' && uv sync --frozen"
 fi

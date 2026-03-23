@@ -14,4 +14,4 @@ docker compose $COMPOSE_FILES run \
     --rm \
     -e "NEW_UID=$(id -u)" \
     -e "NEW_GID=$(id -g)" \
-    python-workspace "${@:-bash}"
+    lane-detection "${@:-bash}"

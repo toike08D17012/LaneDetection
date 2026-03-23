@@ -5,6 +5,7 @@ cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 # ==== 設定（必要なら変更）====
 export USER_NAME="${USER_NAME:-kujira}"
 export GROUP_NAME="${GROUP_NAME:-$USER_NAME}"
+export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-7.5 8.0 8.6 8.9+PTX}"
 
 CONTEXT=".."   # レポジトリルート
 export REPO_NAME="$(basename "$(cd "${CONTEXT}" && pwd)")"
@@ -22,5 +23,6 @@ echo "  GROUP_NAME=${GROUP_NAME}"
 echo "  USER_UID=${USER_UID}"
 echo "  USER_GID=${USER_GID}"
 echo "  HOME=${USER_HOME}"
+echo "  TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}"
 
 docker compose build

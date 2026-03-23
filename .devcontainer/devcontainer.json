@@ -1,12 +1,12 @@
 {
-    "name": "Python ML Environment",
+    "name": "CLRerNet Lane Detection Environment",
     "dockerComposeFile": [
         "../docker/docker-compose.yml",
         "docker-compose.generated.yml"
     ],
     "initializeCommand": "bash .devcontainer/init-gpu.sh",
-    "service": "ml-env",
-    "workspaceFolder": "/home/kujira/workspace/python-workspace-template",
+    "service": "lane-detection",
+    "workspaceFolder": "/home/kujira/workspace/LaneDetection",
     "customizations": {
         "vscode": {
             "extensions": [

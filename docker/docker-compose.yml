@@ -1,19 +1,20 @@
 services:
-  python-workspace:
+  lane-detection:
     build:
       context: ..
       dockerfile: docker/Dockerfile
       args:
-        REPO_NAME: ${REPO_NAME:-python-workspace-template}
+        REPO_NAME: ${REPO_NAME:-LaneDetection}
         USER_NAME: ${USER_NAME:-kujira}
         GROUP_NAME: ${GROUP_NAME:-kujira}
         USER_UID: ${USER_UID:-1000}
         USER_GID: ${USER_GID:-1000}
-    image: python-workspace-template:latest
+        TORCH_CUDA_ARCH_LIST: ${TORCH_CUDA_ARCH_LIST:-7.5 8.0 8.6 8.9+PTX}
+    image: lane-detection:latest
     volumes:
-      - ../:/home/kujira/workspace/python-workspace-template
+      - ../:/home/kujira/workspace/${REPO_NAME:-LaneDetection}
     tty: true
     stdin_open: true
     network_mode: 'host'
-    working_dir: /home/kujira/workspace/python-workspace-template
+    working_dir: /home/kujira/workspace/${REPO_NAME:-LaneDetection}
     command: ["bash"]

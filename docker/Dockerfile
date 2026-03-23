@@ -1,23 +1,19 @@
-FROM ubuntu:24.04
-# For ML/GPU workloads, replace the above line with:
-# FROM nvidia/cuda:13.0.2-cudnn-runtime-ubuntu24.04
+# CLRerNet lane detection environment
+# Requires CUDA 12.1 compatible GPU for full functionality (NMS compilation + GPU inference)
+FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
 
-# Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     DEBIAN_FRONTEND=noninteractive
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Basic tools
     git \
     curl \
     wget \
     ca-certificates \
-    # Image processing dependencies
     libgl1 \
     libglib2.0-0 \
-    # Utilities
     zip \
     unzip \
     procps \
@@ -27,12 +23,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV TZ=Asia/Tokyo
 
-ARG WORKSPACE=/workspace
-
 ARG USER_UID
 ARG USER_GID
 ARG USER_NAME
 ARG GROUP_NAME=${USER_NAME}
+ARG TORCH_CUDA_ARCH_LIST="7.5 8.0 8.6 8.9+PTX"
 
 ENV HOME=/home/${USER_NAME}
 
@@ -42,15 +37,25 @@ RUN userdel -r ubuntu 2>/dev/null || true \
     && touch ${HOME}/.sudo_as_admin_successful \
     && echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 
-RUN mkdir -p ${WORKSPACE} \
-    && chown -R ${USER_UID}:${USER_GID} ${WORKSPACE} \
+# Clone CLRerNet repository (done as root before user switch)
+ENV CLRERNET_ROOT=/opt/CLRerNet
+RUN git clone --depth 1 https://github.com/hirotomusiker/CLRerNet.git ${CLRERNET_ROOT} \
+    && chown -R ${USER_UID}:${USER_GID} ${CLRERNET_ROOT}
+
+RUN mkdir -p /workspace \
+    && mkdir -p /opt/venv \
+    && chown -R ${USER_UID}:${USER_GID} /opt/venv \
+    && chown -R ${USER_UID}:${USER_GID} /workspace \
     && chown -R ${USER_UID}:${USER_GID} /home
 
 USER ${USER_NAME}
 ARG REPO_NAME
 ENV WORK_DIR=${HOME}/workspace/${REPO_NAME}
-ENV PYTHON_VERSION=3.14.2 \
-    UV_PROJECT_ENVIRONMENT=${HOME}/.venv
+# Python 3.11.9 required by CLRerNet (mmlab stack constraint)
+ENV PYTHON_VERSION=3.11.9 \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST} \
+    PYTHONPATH="/opt/CLRerNet"
 WORKDIR ${WORK_DIR}
 
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -60,10 +65,12 @@ COPY --chown=${USER_UID}:${USER_GID} pyproject.toml uv.lock README.md ./
 
 RUN uv python install ${PYTHON_VERSION} && \
     uv venv --python ${PYTHON_VERSION} ${UV_PROJECT_ENVIRONMENT} \
-    && uv sync --frozen --no-install-project\
+    && uv sync --no-install-project \
     && uv clean
 
-# Default command
+# Build CLRerNet custom NMS CUDA extension after dependencies are installed.
+RUN cd ${CLRERNET_ROOT}/libs/models/layers/nms && python setup.py install
+
 CMD ["bash"]
 
 USER root

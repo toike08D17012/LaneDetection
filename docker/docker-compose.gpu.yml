@@ -1,5 +1,5 @@
 services:
-  python-workspace:
+  lane-detection:
     deploy:
       resources:
         reservations:
